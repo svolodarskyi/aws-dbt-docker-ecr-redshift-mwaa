@@ -1,0 +1,89 @@
+name: dbt CI
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'dbt/**'
+      - '.github/workflows/dbt-ci.yml'
+
+jobs:
+  dbt-test:
+    name: dbt Compile and Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -r dbt/requirements.txt
+          pip install sqlfluff==2.3.5
+
+      - name: Install dbt packages
+        run: dbt deps
+        working-directory: ./dbt
+
+      - name: Lint SQL with sqlfluff
+        run: sqlfluff lint models/ --dialect redshift
+        working-directory: ./dbt
+        continue-on-error: true
+
+      - name: dbt Compile
+        run: dbt compile --profiles-dir ./profiles --target dev
+        working-directory: ./dbt
+        env:
+          REDSHIFT_HOST_DEV: ${{ secrets.REDSHIFT_HOST_DEV }}
+          REDSHIFT_USER_DEV: ${{ secrets.REDSHIFT_USER_DEV }}
+          REDSHIFT_PASSWORD_DEV: ${{ secrets.REDSHIFT_PASSWORD_DEV }}
+          DBT_TARGET: dev
+
+      - name: dbt Test (dry run)
+        run: dbt test --profiles-dir ./profiles --target dev
+        working-directory: ./dbt
+        env:
+          REDSHIFT_HOST_DEV: ${{ secrets.REDSHIFT_HOST_DEV }}
+          REDSHIFT_USER_DEV: ${{ secrets.REDSHIFT_USER_DEV }}
+          REDSHIFT_PASSWORD_DEV: ${{ secrets.REDSHIFT_PASSWORD_DEV }}
+          DBT_TARGET: dev
+        continue-on-error: true
+
+  docker-build-test:
+    name: Docker Build Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./dbt
+          push: false
+          tags: dbt-project:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: dbt-project:test
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'

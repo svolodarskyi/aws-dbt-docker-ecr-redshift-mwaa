@@ -1,0 +1,4 @@
+dbt-core==1.7.4
+dbt-redshift==1.7.1
+dbt-external-tables==0.8.7
+boto3==1.34.0

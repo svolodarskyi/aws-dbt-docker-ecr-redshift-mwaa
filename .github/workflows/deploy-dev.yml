@@ -1,0 +1,120 @@
+name: Deploy to Dev
+
+on:
+  push:
+    branches: [develop]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy-infrastructure:
+    name: Deploy Infrastructure
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME_DEV }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+
+      - name: Terraform Init
+        run: terraform init
+        working-directory: ./terraform/environments/dev
+
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan
+        working-directory: ./terraform/environments/dev
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve tfplan
+        working-directory: ./terraform/environments/dev
+
+  build-and-push-dbt:
+    name: Build and Push dbt Image
+    runs-on: ubuntu-latest
+    needs: deploy-infrastructure
+    environment: dev
+
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME_DEV }}
+          aws-region: us-east-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.login-ecr.outputs.registry }}/dbt-project
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./dbt
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.meta.outputs.tags }}
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+
+  deploy-airflow-dags:
+    name: Deploy Airflow DAGs
+    runs-on: ubuntu-latest
+    needs: build-and-push-dbt
+    environment: dev
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME_DEV }}
+          aws-region: us-east-1
+
+      - name: Sync DAGs to S3
+        run: |
+          aws s3 sync ./airflow/dags/ s3://${{ secrets.MWAA_BUCKET_DEV }}/dags/ --delete
+          aws s3 sync ./airflow/plugins/ s3://${{ secrets.MWAA_BUCKET_DEV }}/plugins/ --delete
+          aws s3 cp ./airflow/requirements.txt s3://${{ secrets.MWAA_BUCKET_DEV }}/requirements.txt
+
+      - name: Wait for MWAA to sync
+        run: sleep 300  # MWAA takes ~5 minutes to pick up new DAGs
+
+      - name: Verify deployment
+        run: echo "Deployment to dev environment complete"

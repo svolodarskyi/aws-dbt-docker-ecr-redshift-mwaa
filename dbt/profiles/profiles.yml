@@ -1,0 +1,31 @@
+data_platform:
+  target: "{{ env_var('DBT_TARGET', 'dev') }}"
+
+  outputs:
+    dev:
+      type: redshift
+      host: "{{ env_var('REDSHIFT_HOST_DEV') }}"
+      user: "{{ env_var('REDSHIFT_USER_DEV') }}"
+      password: "{{ env_var('REDSHIFT_PASSWORD_DEV') }}"
+      port: 5439
+      dbname: "{{ env_var('REDSHIFT_DATABASE_DEV', 'analytics_dev') }}"
+      schema: "{{ env_var('REDSHIFT_SCHEMA_DEV', 'dbt_dev') }}"
+      threads: 4
+      keepalives_idle: 240
+      connect_timeout: 10
+      search_path: public
+      sslmode: prefer
+
+    prod:
+      type: redshift
+      host: "{{ env_var('REDSHIFT_HOST_PROD') }}"
+      user: "{{ env_var('REDSHIFT_USER_PROD') }}"
+      password: "{{ env_var('REDSHIFT_PASSWORD_PROD') }}"
+      port: 5439
+      dbname: "{{ env_var('REDSHIFT_DATABASE_PROD', 'analytics_prod') }}"
+      schema: "{{ env_var('REDSHIFT_SCHEMA_PROD', 'analytics') }}"
+      threads: 8
+      keepalives_idle: 240
+      connect_timeout: 10
+      search_path: public
+      sslmode: require

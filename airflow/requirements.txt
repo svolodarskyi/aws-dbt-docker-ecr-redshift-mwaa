@@ -1,0 +1,12 @@
+# MWAA Requirements
+# Note: apache-airflow is pre-installed in MWAA
+
+# AWS Providers
+apache-airflow-providers-amazon==8.13.0
+
+# dbt integration
+astronomer-cosmos==1.4.0
+dbt-redshift==1.7.1
+
+# Utilities
+boto3==1.34.0
